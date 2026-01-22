@@ -88,7 +88,7 @@ def detect_onsets(envelope: np.ndarray, threshold: float = None) -> np.ndarray:
     counting the same hit multiple times, there's a minimum distance of 3 indexes. 
     """
     if threshold is None:
-        threshold = np.mean(envelope) * 1.5
+        threshold = np.mean(envelope) * 1.2
 
     diffs = np.diff(envelope)
     rising = diffs > 0
@@ -145,19 +145,42 @@ def normalize_amplitudes(hits: list[dict]) -> list[dict]:
 
     Hint: Find max amplitude, divide all by it.
     """
-    raise NotImplementedError("Stretch goal")
+    max_amplitude = max(h["amplitude"] for h in hits)
+    return [
+        {"time": h["time"], "amplitude": h["amplitude"] / max_amplitude}
+        for h in hits
+    ]
 
 
 def classify_dynamics(hits: list[dict]) -> list[dict]:
     """
     Add a 'dynamic' label to each hit: 'ghost', 'normal', 'accent'.
 
-    Hints:
-    - Ghost notes: quietest 20%? Below some threshold?
-    - Accents: loudest 20%? Above some threshold?
-    - This is subjective - experiment!
+    Only classifies if there's meaningful variation in amplitudes.
     """
-    raise NotImplementedError("Stretch goal")
+    amplitudes = [h["amplitude"] for h in hits]
+    mean_amp = np.mean(amplitudes)
+    std_amp = np.std(amplitudes)
+
+    # If all hits are similar (low variance), call them all normal
+    if std_amp < mean_amp * 0.15:
+        return [{**h, "dynamic": "normal"} for h in hits]
+
+    ghost_threshold = np.percentile(amplitudes, 20)
+    accent_threshold = np.percentile(amplitudes, 80)
+
+    return [
+        {**h, "dynamic": calculate_dynamic(h["amplitude"], ghost_threshold, accent_threshold)}
+        for h in hits
+    ]
+
+def calculate_dynamic(amplitude: float, ghost_percentile: float, accent_percentile: float) -> str:
+    if amplitude <= ghost_percentile:
+        return 'ghost'
+    elif amplitude >= accent_percentile:
+        return 'accent'
+    else:
+        return 'normal'
 
 
 def detect_tempo_changes(hits: list[dict]) -> list[dict]:
@@ -166,7 +189,15 @@ def detect_tempo_changes(hits: list[dict]) -> list[dict]:
 
     Hint: tempo = 60 / inter_onset_interval (gives BPM)
     """
-    raise NotImplementedError("Stretch goal")
+    times = [h["time"] for h in hits]
+    tempos = 60 / np.diff(times)
+
+    result = [
+        {**h, "tempo": tempos[i]}
+        for i, h in enumerate(hits[:-1])
+    ]
+    result.append({**hits[-1], "tempo": None})
+    return result
 
 
 # =============================================================================
@@ -196,3 +227,20 @@ if __name__ == "__main__":
     hits = measure_hits(samples, onsets, window_size=1024, sample_rate=sr)
     for h in hits[:10]:  # Print first 10
         print(f"  {h['time']:.3f}s: {h['amplitude']:.4f}")
+
+    # Stretch goals:
+
+    normalized = normalize_amplitudes(hits)
+    print(f"\nNormalized amplitudes:")
+    for h in normalized[:10]:
+        print(f"  {h['time']:.3f}s: {h['amplitude']:.4f}")
+
+    classified = classify_dynamics(normalized)
+    print(f"\nClassified dynamics:")
+    for h in classified[:10]:
+        print(f"  {h['time']:.3f}s: {h['amplitude']:.4f} ({h['dynamic']})")
+
+    with_tempo = detect_tempo_changes(classified)
+    print(f"\nTempo changes:")
+    for h in with_tempo[:10]:
+        print(f"  {h['time']:.3f}s: {h.get('tempo', 'N/A')} BPM")
