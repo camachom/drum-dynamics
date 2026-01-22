@@ -18,26 +18,35 @@ Suggested order of implementation:
     5. analyze (stretch goal) - answer your interesting questions
 """
 
-from curses import KEY_OPTIONS
 import numpy as np
 from scipy.io import wavfile
 
 
 def load_audio(filepath: str) -> tuple[np.ndarray, int]:
     """
-    Load an audio file and return (samples, sample_rate).
+    Audio file can have more than one channel (stereo). This is an example of `data` from a stereo file:
 
-    Hints:
-    - scipy.io.wavfile.read() returns (rate, data)
-    - If stereo, you'll get shape (N, 2) - convert to mono by averaging channels
-    - Normalize to float in range [-1, 1] (divide by max value for dtype)
+    # a.shape
+    # (num of samples, num of channels)
+    (85441, 2)
 
-    Returns:
-        samples: 1D numpy array of floats
-        sample_rate: int (e.g., 44100)
+    # print(a) 
+    [[      0       0]
+    [ -65536  -65536]
+    [-917504 -917504]
+    ...]
+
+    Take the mean for each row and collapse this into a single array:
+    `data.mean(axis=1)`
+
+    The rest is convention. Seems like mapping amplitudes to [-1,1] is standard.
     """
     rate, data = wavfile.read(filepath)
     original_dtype = data.dtype
+
+    print(data.shape)
+    print(data)
+
 
     if data.ndim > 1:
         data = data.mean(axis=1)
@@ -48,19 +57,13 @@ def load_audio(filepath: str) -> tuple[np.ndarray, int]:
 
 def compute_envelope(samples: np.ndarray, window_size: int = 1024) -> np.ndarray:
     """
-    Compute the amplitude envelope of the signal.
+    If you plot the sample, its really jagged and chaotic. Envelops are used
+    to more easily work with data. They basically smooth out the curve.
 
-    Hints:
-    - RMS (root mean square) in sliding windows is a common approach
-    - np.convolve can help, or just loop through windows
-    - Consider: should windows overlap? By how much?
+    Given a window size, use the RMS (root mean square) algorithm and add it to
+    this new `envelop` array.
 
-    Args:
-        samples: audio samples
-        window_size: number of samples per window (try 1024 for ~23ms at 44.1kHz)
-
-    Returns:
-        envelope: 1D array, one value per window (will be shorter than samples)
+    Intuitively, you want the mean without all those sudden drops.
     """
 
     envelope = np.zeros(len(samples) // window_size)
@@ -75,23 +78,14 @@ def compute_envelope(samples: np.ndarray, window_size: int = 1024) -> np.ndarray
 
 def detect_onsets(envelope: np.ndarray, threshold: float = None) -> np.ndarray:
     """
-    Find indices in the envelope where hits occur.
+    Threshold will determine if a sample is loud enough to be a `hit` candidate.
 
-    TODO: Implement this.
+    `np.diff` computes the difference between elements in the `envelop` array. A `hit`
+    needs to be rising (so diff is positive) and above the threshold. An diff that's
+    negative is just sustain from a previous `hit`.
 
-    Hints:
-    - Simple approach: find where envelope crosses a threshold
-    - Better: find where envelope RISES above threshold (first-order difference > 0)
-    - Problem: one hit might cross threshold multiple times (ringing)
-      → Consider a "minimum distance" between detected onsets
-    - If threshold is None, try computing one from the signal (e.g., mean * 1.5)
-
-    Args:
-        envelope: amplitude envelope from compute_envelope()
-        threshold: minimum amplitude to count as a hit
-
-    Returns:
-        onset_indices: indices into the envelope array where hits occur
+    The `hits` array is a set of indexes that satisfy the criteria. In order to avoid
+    counting the same hit multiple times, there's a minimum distance of 3 indexes. 
     """
     if threshold is None:
         threshold = np.mean(envelope) * 1.5
@@ -120,26 +114,23 @@ def detect_onsets(envelope: np.ndarray, threshold: float = None) -> np.ndarray:
 def measure_hits(samples: np.ndarray, onset_indices: np.ndarray,
                  window_size: int, sample_rate: int) -> list[dict]:
     """
-    Measure the amplitude of each detected hit.
+    Sample rate is samples per second (e.g., 44100 Hz = 44100 samples/sec).
+    We need to find the timestamp of when the hit occurred (aka seconds).
+    
+    SR = samples / sec
+    SR * sec = samples
+    sec = samples / SR
 
-    TODO: Implement this.
-
-    Hints:
-    - onset_indices are positions in the ENVELOPE, not the raw samples
-    - Convert: sample_position = onset_index * window_size (approximately)
-    - For each onset, look at a small window and find peak amplitude
-    - Return both time (in seconds) and amplitude
-
-    Args:
-        samples: original audio samples
-        onset_indices: from detect_onsets()
-        window_size: same window_size used in compute_envelope
-        sample_rate: for converting to seconds
-
-    Returns:
-        List of {"time": float, "amplitude": float} dicts
+    This might sound silly but its a good reminder that a negative value could be the peak. 
+    Loudness is measured in displacement from 0 in either direction (which is why it uses np.abs). 
     """
-    raise NotImplementedError("Your turn")
+    return [
+      {
+          "time": (onset_idx * window_size) / sample_rate,
+          "amplitude": np.max(np.abs(samples[onset_idx * window_size : (onset_idx + 1) * window_size]))
+      }
+      for onset_idx in onset_indices
+    ]
 
 
 # =============================================================================
@@ -202,6 +193,6 @@ if __name__ == "__main__":
     onsets = detect_onsets(envelope)
     print(f"Detected {len(onsets)} hits")
 
-    # hits = measure_hits(samples, onsets, window_size=1024, sample_rate=sr)
-    # for h in hits[:10]:  # Print first 10
-    #     print(f"  {h['time']:.3f}s: {h['amplitude']:.4f}")
+    hits = measure_hits(samples, onsets, window_size=1024, sample_rate=sr)
+    for h in hits[:10]:  # Print first 10
+        print(f"  {h['time']:.3f}s: {h['amplitude']:.4f}")
